@@ -1,0 +1,52 @@
+---
+# tasks file for zabbix
+
+# I denne fil tjekkes der om zabbix agenten er installeret.
+# Hvis zabbix agenten ikke er installeret importeres playbooken install.yml
+# Hvis zabbix agenten er installeret tjekkes der efter hvilken version
+# Hvis zabbix agent versionen er lavere end den ønsket version, importeres playbooken upgrade.yml
+# Hvis zabbix agent versionen er højere eller ligmed den ønsket version afsluttes playbooken.
+
+# Denne playbook virker kun på RedHat lige nu.
+# Der skal tilføjes repository url for andre linux distroer til defaults/main.yml filen
+# Der skal tilføjes et filter så versionsnummeret kan filteret fra og bruges til at sammenligne med ønsket version
+
+- name: check if zabbix_agent2 is installed.
+  command: zabbix_agent2 --version
+  register: zabbix_agentv2
+  failed_when: false
+
+- name: check if zabbix_agentd is installed.
+  command: zabbix_agentd --version
+  register: zabbix_agentv1
+  failed_when: false
+
+- name: block
+  block:
+
+  - name: Checking what version of zabbix agent is installed.
+    package_facts:
+      manager: auto
+
+  - name: save the version value to a variable
+    debug:
+      msg: "{{ ansible_facts.packages[zabbix_agent_installed] | map(attribute='version') | list }}"
+    register: package_version
+
+  - name: Upgrading zabbix agent.
+    include_tasks: upgrade.yml
+    when: package_version is version_compare('zabbix_release', 'gt')
+
+  - name: No upgrade needed for zabbix agent.
+    debug:
+      msg: 
+      - "Required version: {{ zabbix_release }}"
+      - "Installed version: {{ package_version.msg }}"
+      - "No changed needed"
+    when: package_version is version_compare('zabbix_release', 'le')
+
+  when: zabbix_agent_installed != 'none'
+
+- name: zabbix agent not installed.
+  include_tasks: install.yml
+  when: zabbix_agent_installed == 'none'

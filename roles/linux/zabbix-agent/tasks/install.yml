@@ -1,0 +1,109 @@
+---
+# TODO make a check of witch linux distro used.
+
+# Checks if the zabbix agent repository is available.
+
+- name: Check if the zabbix agent is available.
+  block:
+
+  - name: Checks if the zabbix agent version 2 is available.
+    uri:
+      url: "{{ zabbix_agent2_repo }}"
+    register: url_check_v2
+    failed_when: false
+
+  - name: Installing zabbix agent version 2.
+    package:
+      name: "{{ zabbix_agent2_repo }}"
+      state: present
+      disable_gpg_check: True
+    when: url_check_v2.status == 200
+
+  - name: Checks if the zabbixagent version 1 is available.
+    uri:
+      url: "{{ zabbix_agent_repo }}"
+    register: url_check_v1
+    failed_when: false
+    when: url_check_v2.status == 404
+
+  - name: Installing zabbix agent version 1.
+    package:
+      name: "{{ zabbix_agent_repo }}"
+      state: present
+      disable_gpg_check: True
+    when: url_check_v2.status == 404 and url_check_v1.status == 200
+
+  - name: The zabbix agent is not available on the given repositories.
+    fail:
+      msg: The zabbix agent is not available on the given repositories, check if the zabbix_agent_repo and zabbix_agent2_repo values are correct.
+    when: url_check_v2.status == 404 and url_check_v1.status == 404
+
+# TODO Make it possible to select between auto registration and manuel.
+# If auto registration is selected then the specific PSK identity and PSK key specified on the zabbix server is inserted in the zabbix agent configurations file.
+# If manuel is selected then a new psk key is generated and the psk identity is set to psk-[hostname], those values is then added to the zabbix agent configuration file.
+
+# Manuel registration
+
+- name: Generating PSK key for manuel registration.
+  block:
+
+    - name: Generate a PSK key on the Ansible master.
+      command: "openssl rand -hex 32"
+      register: psk_key
+      delegate_to: localhost
+
+    - name: create a file
+      file:
+        path: "{{ zabbix_TLSPSKFile }}"
+        state: touch
+
+    - name: add psk key to "{{ zabbix_TLSPSKFile }}"
+      copy:
+        dest: "{{ zabbix_TLSPSKFile }}"
+        content: "{{psk_key.stdout}}"
+
+  when: auto_registration == false
+
+# Auto registration
+
+- name: Adding PSK identity and PSK key values to the variables.
+  block:
+
+  - name: Create PSK file.
+    file:
+      path: "{{ zabbix_TLSPSKFile }}"
+      state: touch
+      modification_time: preserve
+      access_time: preserve
+
+  - name: Import PSK identity and key values.
+    include_vars:
+      file: PSK_{{ environment }}.yml # TODO change so environments structure is used.
+
+    # file: {{ environment }}/PSK_key.yml ?
+
+  - name: Set the value of PSK_identity to the value of PSK_identity_auto
+    set_fact:
+      PSK_identity: "{{ PSK_identity_auto }}"
+
+  - name: Adding the PSK_key vaule to the TLSPSKFile
+    copy:
+      content: "{{ PSK_key }}"
+      dest: "{{ zabbix_TLSPSKFile }}"
+
+  when: auto_registration == true
+
+# Edit the zabbix agent config file with templates.
+
+- name: Editing the {{ zabbix_agent_version }}.conf file.
+  ansible.builtin.copy:
+    src: "template/{{ zabbix_agent_version }}.conf.j2"
+    dest: "/etc/zabbix/{{ zabbix_agent_version }}.conf"
+    mode: 766
+
+# Restarting the zabbix agent service.
+
+- name: Restarting the zabbix agent service.
+  service:
+    name: "{{ zabbix_agent_service }}"
+    state: restarted
